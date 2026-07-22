@@ -1,0 +1,29 @@
+name: Sync Fork with Upstream
+
+# Periodically merge upstream (QuantumNous/new-api) into this fork's main
+# branch using GitHub's merge-upstream API. Runs daily and on demand.
+# If upstream has diverged in a way that conflicts with local changes,
+# the API returns 409 and the run fails — resolve manually:
+#   git remote add upstream https://github.com/QuantumNous/new-api.git
+#   git fetch upstream
+#   git merge upstream/main   # resolve conflicts
+#   git push origin main
+
+on:
+  schedule:
+    - cron: '17 3 * * *' # daily at 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge upstream into main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api repos/${{ github.repository }}/merge-upstream \
+            -f branch=main

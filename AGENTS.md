@@ -4,22 +4,29 @@ DO NOT send optional commentary
 
 ## Overview
 
-This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI providers (OpenAI, Claude, Gemini, Azure, AWS Bedrock, etc.) behind a unified API, with user management, billing, rate limiting, and an admin dashboard.
+New API is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI providers (OpenAI, Claude, Gemini, Azure, AWS Bedrock, etc.) behind a unified API, with user management, billing, rate limiting, and an admin dashboard. It is distributed as a single binary that embeds the compiled React frontend (`go:embed web/dist`) and serves it on port 3000 by default.
+
+The Go module path is `github.com/QuantumNous/new-api`. The current version string lives in the `VERSION` file and is injected at build time via `-ldflags "-X 'github.com/QuantumNous/new-api/common.Version=...'"`.
 
 ## Tech Stack
 
-- **Backend**: Go 1.22+, Gin web framework, GORM v2 ORM
-- **Frontend**: React 19, TypeScript, Rsbuild, Base UI, Tailwind CSS
-- **Databases**: SQLite, MySQL, PostgreSQL (all three must be supported)
+- **Backend**: Go (go.mod requires 1.25.1; Docker builds use golang 1.26.x), Gin web framework, GORM v2 ORM
+- **Frontend**: React 19, TypeScript, Rsbuild, Base UI, Tailwind CSS v4, TanStack Router/Query/Table, Zustand, React Hook Form + Zod
+- **Databases**: SQLite, MySQL >= 5.7.8, PostgreSQL >= 9.6 (all three must be supported); ClickHouse is optionally supported for the log database only
 - **Cache**: Redis (go-redis) + in-memory cache
-- **Auth**: JWT, WebAuthn/Passkeys, OAuth (GitHub, Discord, OIDC, etc.)
+- **Auth**: JWT, WebAuthn/Passkeys, OAuth (GitHub, Discord, OIDC, LinuxDO, custom providers), Casbin-based authorization (`service/authz`)
+- **Payments**: Stripe, go-epay, Creem, Waffo (`setting/payment_*.go`)
 - **Frontend package manager**: Bun (preferred over npm/yarn/pnpm)
+- **Key config files**: `go.mod`, `web/package.json`, `web/bun.lock`, `makefile`, `Dockerfile`, `docker-compose.yml`, `docker-compose.dev.yml`, `.env.example`, `VERSION`
 
 ## Architecture
 
 Layered architecture: Router -> Controller -> Service -> Model
 
 ```
+main.go        — Entry point: loads .env, initializes DB/Redis/options/authz/i18n,
+                 starts background jobs (option sync, quota data, scheduled system
+                 tasks, subscription reset, task polling), then serves Gin.
 router/        — HTTP routing (API, relay, dashboard, web)
 controller/    — Request handlers
 service/       — Business logic
@@ -34,10 +41,53 @@ constant/      — Constants (API types, channel types, context keys)
 types/         — Type definitions (relay formats, file sources, errors)
 i18n/          — Backend internationalization (go-i18n, en/zh)
 oauth/         — OAuth provider implementations
-pkg/           — Internal packages (cachex, ionet)
+logger/        — Logging setup
+pkg/           — Internal packages (cachex, ionet, billingexpr, perf_metrics)
 web/           — Frontend (React 19, Rsbuild, Base UI, Tailwind)
   src/i18n/    — Frontend internationalization (i18next, en/zh/zh-TW/fr/ru/ja/vi)
+electron/      — Optional Electron desktop wrapper
+docs/          — User/developer documentation (installation, channel guides, OpenAPI)
 ```
+
+Runtime notes:
+
+- Configuration is environment-variable driven (`.env` file optional; see `.env.example` and `docker-compose.yml`). Key variables: `SQL_DSN` (main database; defaults to SQLite), `LOG_SQL_DSN` (optional separate log database), `REDIS_CONN_STRING`, `PORT`, `SESSION_SECRET`, `NODE_NAME`, `BATCH_UPDATE_ENABLED`, `CHANNEL_UPDATE_FREQUENCY`.
+- Runtime options are stored in the `options` DB table and hot-reloaded periodically (`model.SyncOptions`); authorization policies are also reloaded periodically for multi-node deployments.
+- A scheduled system task runner (DB-lease dedup across masters) runs channel tests, upstream model updates, and async task polling (Midjourney / Suno / video).
+
+## Build, Run, and Test
+
+### Backend
+
+- Run locally: `go run main.go` (or `make all` to build the frontend first and start the API).
+- Build: `go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$(cat VERSION)'" -o new-api` (a `web/dist` build must exist first, since it is embedded).
+- Tests: `go test ./...` (113+ test files across the repo). Backend tests use `stretchr/testify`; `miniredis` is available for Redis-dependent tests.
+- Format/vet: standard `gofmt` / `go vet`.
+
+### Frontend (`web/`)
+
+- `bun install` — install dependencies (CI uses `bun install --frozen-lockfile`).
+- `bun run dev` — Rsbuild dev server (or `make dev-web`, which serves on port 5173).
+- `bun run build` — production build (the makefile sets `DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION=$(cat VERSION)`).
+- `bun run typecheck` — TypeScript check via `tsgo -b` (`build:check` runs typecheck + build).
+- `bun run lint` / `bun run lint:fix` — oxlint.
+- `bun run format` / `bun run format:check` — oxfmt via `scripts/format-with-protected-headers.mjs` (preserves copyright headers).
+- `bun run i18n:sync` — i18n key tooling.
+- Frontend tests: existing tests use Node's built-in runner (`node:test` + `node:assert/strict`) and live next to the code as `*.test.ts(x)` or in a module's `__tests__/` directory; there is currently no `test` script in `package.json`. New or rewritten tests should follow `web/AGENTS.md` §3.14 (Vitest + React Testing Library conventions).
+
+### Make targets (`makefile`)
+
+- `make build-web` — install + build the frontend with the version stamp.
+- `make all` — build frontend, then `go run main.go`.
+- `make dev-api` / `make dev-api-rebuild` — run the backend + PostgreSQL via `docker-compose.dev.yml`.
+- `make dev` — dev-api + dev-web together.
+- `make reset-setup` — wipe the setup-wizard state (setups table, root users) from the dev database to re-test first-run setup.
+
+### Deployment and CI
+
+- **Docker**: multi-stage `Dockerfile` builds the frontend with Bun and the backend with Go, producing a Debian-slim image exposing port 3000 with `/data` as the working directory. Published as `calciumion/new-api`. `docker-compose.yml` wires PostgreSQL (or MySQL), Redis, and optional ClickHouse for logs.
+- **GitHub Actions** (`.github/workflows/`): `release.yml` builds Linux/macOS/Windows binaries and GitHub releases on tags; `docker-build.yml` and `docker-image-branch.yml` publish Docker images; `electron-build.yml` builds the desktop app; `pr-check.yml` enforces PR template compliance.
+- **Systemd**: a `new-api.service` unit file is included for bare-metal installs.
 
 ## Internationalization (i18n)
 
@@ -131,7 +181,8 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
   - `bun run i18n:*` for i18n tooling
 - Frontend UI text must support i18n with `i18next`/`react-i18next`. Use flat JSON locale files in `web/src/i18n/locales/{lang}.json`, with English source strings as keys.
 - In React components, use `useTranslation()` and call `t('English key')` for user-facing text.
-- Follow `web/AGENTS.md` for detailed frontend conventions, including TypeScript, component structure, styling, accessibility, testing, and build checks.
+- After changing TypeScript/TSX, run `bun run typecheck` and fix all errors; before finishing a change, run `bun run lint` on the touched files and fix all lint errors.
+- Follow `web/AGENTS.md` for detailed frontend conventions (written in Chinese), including TypeScript, component structure, styling, accessibility, testing, and build checks.
 
 ### Project Governance
 
