@@ -76,6 +76,8 @@ const (
 	MsgUserPasswordLoginDisabled     = "user.password_login_disabled"
 	MsgUserRegisterDisabled          = "user.register_disabled"
 	MsgUserPasswordRegisterDisabled  = "user.password_register_disabled"
+	MsgUserInvitationCodeRequired    = "user.invitation_code_required"
+	MsgUserInvitationCodeInvalid     = "user.invitation_code_invalid"
 	MsgUserUsernameOrPasswordEmpty   = "user.username_or_password_empty"
 	MsgUserUsernameOrPasswordError   = "user.username_or_password_error"
 	MsgUserEmailOrPasswordEmpty      = "user.email_or_password_empty"

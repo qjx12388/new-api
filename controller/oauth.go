@@ -204,6 +204,10 @@ func HandleOAuth(c *gin.Context) {
 			common.ApiErrorI18n(c, i18n.MsgOAuthUserDeleted)
 		case *OAuthRegistrationDisabledError:
 			common.ApiErrorI18n(c, i18n.MsgUserRegisterDisabled)
+		case *OAuthInvitationCodeRequiredError:
+			common.ApiErrorI18n(c, i18n.MsgUserInvitationCodeRequired)
+		case *OAuthInvitationCodeInvalidError:
+			common.ApiErrorI18n(c, i18n.MsgUserInvitationCodeInvalid)
 		case *OAuthEmailAlreadyTakenError:
 			common.ApiErrorI18n(c, i18n.MsgUserEmailAlreadyTaken)
 		default:
@@ -368,7 +372,16 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 
 	// Handle affiliate code
 	inviterId := 0
-	if affiliateCode != "" {
+	if common.InvitationCodeRegisterEnabled {
+		if affiliateCode == "" {
+			return nil, &OAuthInvitationCodeRequiredError{}
+		}
+		id, err := model.GetUserIdByAffCode(affiliateCode)
+		if err != nil || id == 0 {
+			return nil, &OAuthInvitationCodeInvalidError{}
+		}
+		inviterId = id
+	} else if affiliateCode != "" {
 		inviterId, _ = model.GetUserIdByAffCode(affiliateCode)
 	}
 
@@ -450,6 +463,18 @@ type OAuthEmailAlreadyTakenError struct{}
 
 func (e *OAuthEmailAlreadyTakenError) Error() string {
 	return "email is already in use"
+}
+
+type OAuthInvitationCodeRequiredError struct{}
+
+func (e *OAuthInvitationCodeRequiredError) Error() string {
+	return "registration requires an invitation code"
+}
+
+type OAuthInvitationCodeInvalidError struct{}
+
+func (e *OAuthInvitationCodeInvalidError) Error() string {
+	return "invalid invitation code"
 }
 
 // handleOAuthError handles OAuth errors and returns translated message

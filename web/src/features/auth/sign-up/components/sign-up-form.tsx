@@ -61,6 +61,7 @@ export function SignUpForm({
   const { t } = useTranslation()
   const [isLoading, setIsLoading] = useState(false)
   const [verificationCode, setVerificationCode] = useState('')
+  const [invitationCode, setInvitationCode] = useState(() => getAffiliateCode())
   const [agreedToLegal, setAgreedToLegal] = useState(false)
   const [wechatCode, setWeChatCode] = useState('')
   const [isWeChatDialogOpen, setIsWeChatDialogOpen] = useState(false)
@@ -106,6 +107,10 @@ export function SignUpForm({
     status?.oauth_register_enabled ??
     status?.data?.oauth_register_enabled ??
     true
+  const invitationCodeRequired = Boolean(
+    status?.invitation_code_register_enabled ??
+    status?.data?.invitation_code_register_enabled
+  )
   const hasWeChatLogin = Boolean(status?.wechat_login)
   const turnstileReady = !isTurnstileEnabled || Boolean(turnstileToken)
 
@@ -135,8 +140,14 @@ export function SignUpForm({
     const aff = new URLSearchParams(window.location.search).get('aff')?.trim()
     if (aff) {
       saveAffiliateCode(aff)
+      setInvitationCode(aff)
     }
   }, [])
+
+  const handleInvitationCodeChange = (value: string) => {
+    setInvitationCode(value)
+    saveAffiliateCode(value)
+  }
 
   async function onSubmit(data: z.infer<typeof registerFormSchema>) {
     if (requiresLegalConsent && !agreedToLegal) {
@@ -156,6 +167,11 @@ export function SignUpForm({
       }
     }
 
+    if (invitationCodeRequired && !invitationCode.trim()) {
+      toast.error(t('Please enter the invitation code'))
+      return
+    }
+
     if (!validateTurnstile()) return
 
     setIsLoading(true)
@@ -165,7 +181,7 @@ export function SignUpForm({
         password: data.password,
         email: data.email || undefined,
         verification_code: verificationCode || undefined,
-        aff_code: getAffiliateCode(),
+        aff_code: invitationCode.trim() || getAffiliateCode(),
         turnstile: turnstileToken,
       })
 
@@ -344,6 +360,21 @@ export function SignUpForm({
               </Button>
             </div>
           </>
+        )}
+
+        {/* Invitation Code Field */}
+        {invitationCodeRequired && (
+          <div className='grid gap-2'>
+            <Label htmlFor='invitation-code'>{t('Invitation Code')}</Label>
+            <Input
+              id='invitation-code'
+              placeholder={t('Enter the invitation code')}
+              value={invitationCode}
+              onChange={(event) =>
+                handleInvitationCodeChange(event.target.value)
+              }
+            />
+          </div>
         )}
 
         {/* Turnstile */}

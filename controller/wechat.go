@@ -89,6 +89,14 @@ func WeChatAuth(c *gin.Context) {
 		}
 	} else {
 		if common.RegisterEnabled {
+			if common.InvitationCodeRegisterEnabled {
+				// 微信扫码流程无法携带邀请码，邀请注册制下拒绝自动注册
+				c.JSON(http.StatusOK, gin.H{
+					"success": false,
+					"message": "管理员已开启邀请注册制，请使用邀请码注册后再绑定微信登录",
+				})
+				return
+			}
 			user.Username = "wechat_" + strconv.Itoa(model.GetMaxUserId()+1)
 			user.DisplayName = "WeChat User"
 			user.Role = common.RoleCommonUser

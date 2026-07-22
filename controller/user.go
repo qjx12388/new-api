@@ -261,7 +261,21 @@ func Register(c *gin.Context) {
 		return
 	}
 	affCode := user.AffCode // this code is the inviter's code, not the user's own code
-	inviterId, _ := model.GetUserIdByAffCode(affCode)
+	inviterId := 0
+	if common.InvitationCodeRegisterEnabled {
+		if affCode == "" {
+			common.ApiErrorI18n(c, i18n.MsgUserInvitationCodeRequired)
+			return
+		}
+		var err error
+		inviterId, err = model.GetUserIdByAffCode(affCode)
+		if err != nil || inviterId == 0 {
+			common.ApiErrorI18n(c, i18n.MsgUserInvitationCodeInvalid)
+			return
+		}
+	} else {
+		inviterId, _ = model.GetUserIdByAffCode(affCode)
+	}
 	cleanUser := model.User{
 		Username:    user.Username,
 		Password:    user.Password,
