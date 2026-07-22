@@ -3700,6 +3700,7 @@
     "Registered a passkey": "Đã đăng ký một passkey",
     "Registration Enabled": "Đăng ký đã bật",
     "Registration flow expired. Please try again.": "Quy trình đăng ký đã hết hạn. Vui lòng thử lại.",
+    "Registration has been disabled by the administrator": "Quản trị viên đã tắt đăng ký",
     "Registry (optional)": "Registry (tùy chọn)",
     "Registry secret": "Bí mật Registry",
     "Registry username": "Tên người dùng Registry",

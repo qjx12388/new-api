@@ -3700,6 +3700,7 @@
     "Registered a passkey": "Passkey enregistré",
     "Registration Enabled": "Inscription activée",
     "Registration flow expired. Please try again.": "Le processus d’inscription a expiré. Veuillez réessayer.",
+    "Registration has been disabled by the administrator": "L'inscription a été désactivée par l'administrateur",
     "Registry (optional)": "Registre (optionnel)",
     "Registry secret": "Secret du registre",
     "Registry username": "Nom d'utilisateur du registre",

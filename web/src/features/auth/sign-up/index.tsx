@@ -29,6 +29,9 @@ export function SignUp() {
   const { t } = useTranslation()
   const { status } = useStatus()
 
+  const registerEnabled =
+    status?.register_enabled ?? status?.data?.register_enabled ?? true
+
   return (
     <AuthLayout>
       <div className='w-full space-y-8'>
@@ -48,7 +51,13 @@ export function SignUp() {
           </p>
         </div>
 
-        <SignUpForm />
+        {registerEnabled ? (
+          <SignUpForm />
+        ) : (
+          <p className='text-muted-foreground rounded-md border p-4 text-center text-sm'>
+            {t('Registration has been disabled by the administrator')}
+          </p>
+        )}
 
         <TermsFooter
           variant='sign-up'

@@ -3700,6 +3700,7 @@
     "Registered a passkey": "Registered a passkey",
     "Registration Enabled": "Registration Enabled",
     "Registration flow expired. Please try again.": "Registration flow expired. Please try again.",
+    "Registration has been disabled by the administrator": "Registration has been disabled by the administrator",
     "Registry (optional)": "Registry (optional)",
     "Registry secret": "Registry secret",
     "Registry username": "Registry username",

@@ -235,6 +235,12 @@ func GetHomePageContent(c *gin.Context) {
 }
 
 func SendEmailVerification(c *gin.Context) {
+	// 注册关闭时，未登录访客不能再获取注册验证码；
+	// 已登录用户（TryUserAuth 写入 id）仍可用于绑定邮箱。
+	if !common.RegisterEnabled && c.GetInt("id") == 0 {
+		common.ApiErrorI18n(c, i18n.MsgUserRegisterDisabled)
+		return
+	}
 	email := model.NormalizeEmail(c.Query("email"))
 	if err := common.Validate.Var(email, "required,email"); err != nil {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
