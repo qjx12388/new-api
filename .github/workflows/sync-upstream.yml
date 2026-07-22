@@ -1,9 +1,12 @@
 name: Sync Fork with Upstream
 
-# Periodically merge upstream (QuantumNous/new-api) into this fork's main
-# branch using GitHub's merge-upstream API. Runs hourly and on demand.
+# Hourly: merge upstream (QuantumNous/new-api) into this fork's main branch
+# using GitHub's merge-upstream API, and sync upstream tags into the fork.
+# If main was advanced or a new upstream tag appeared, build the Docker image
+# with the repository's Dockerfile as-is and push ghcr.io/qjx12388/new-api:latest.
+#
 # If upstream has diverged in a way that conflicts with local changes,
-# the API returns 409 and the run fails — resolve manually:
+# the merge-upstream API returns 409 and the run fails — resolve manually:
 #   git remote add upstream https://github.com/QuantumNous/new-api.git
 #   git fetch upstream
 #   git merge upstream/main   # resolve conflicts
@@ -15,15 +18,119 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: write # merge-upstream + tag sync
+  packages: write # push image to ghcr.io
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.detect.outputs.changed }}
     steps:
+      - name: Checkout (full history and tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Record previous state
+        id: before
+        run: |
+          echo "main_sha=$(git rev-parse origin/main)" >> "$GITHUB_OUTPUT"
+          echo "tag=$(git tag --sort=-v:refname | head -n1)" >> "$GITHUB_OUTPUT"
+
       - name: Merge upstream into main
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh api repos/${{ github.repository }}/merge-upstream \
             -f branch=main
+
+      - name: Sync upstream tags and detect changes
+        id: detect
+        run: |
+          set -e
+          git remote add upstream https://github.com/QuantumNous/new-api.git
+          git fetch upstream main --tags
+          git fetch origin main
+
+          merged=false
+          after_sha=$(git rev-parse origin/main)
+          if [ "$after_sha" != "${{ steps.before.outputs.main_sha }}" ]; then
+            merged=true
+          fi
+
+          # Bring upstream tags into the fork so the latest tag on origin
+          # always reflects what has already been seen.
+          git push origin --tags
+
+          tag_changed=false
+          latest_tag=$(git tag --sort=-v:refname | head -n1)
+          if [ "$latest_tag" != "${{ steps.before.outputs.tag }}" ]; then
+            tag_changed=true
+          fi
+
+          echo "merged=$merged tag_changed=$tag_changed latest_tag=$latest_tag"
+          changed=false
+          if [ "$merged" = "true" ] || [ "$tag_changed" = "true" ]; then
+            changed=true
+          fi
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: sync
+    if: needs.sync.outputs.changed == 'true'
+    name: Build & push (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile # upstream Dockerfile, unmodified
+          platforms: ${{ matrix.platform }}
+          push: true
+          tags: ghcr.io/qjx12388/new-api:latest-${{ matrix.arch }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  manifest:
+    name: Create multi-arch manifest
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create & push manifest (latest)
+        run: |
+          docker buildx imagetools create \
+            -t ghcr.io/qjx12388/new-api:latest \
+            ghcr.io/qjx12388/new-api:latest-amd64 \
+            ghcr.io/qjx12388/new-api:latest-arm64
