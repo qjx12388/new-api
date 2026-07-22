@@ -5,6 +5,10 @@ name: Sync Fork with Upstream
 # If main was advanced or a new upstream tag appeared, build the Docker image
 # with the repository's Dockerfile as-is and push ghcr.io/qjx12388/new-api:latest.
 #
+# Pushing your own commits to main skips the sync and builds the image
+# directly. Pushes made by this workflow itself (github-actions[bot], from
+# merge-upstream) do not trigger a second build.
+#
 # If upstream has diverged in a way that conflicts with local changes,
 # the merge-upstream API returns 409 and the run fails — resolve manually:
 #   git remote add upstream https://github.com/QuantumNous/new-api.git
@@ -16,6 +20,14 @@ on:
   schedule:
     - cron: '23 * * * *' # hourly at :23
   workflow_dispatch:
+  push:
+    branches: [main]
+
+# Serialize sync/build runs: merge-upstream's own push to main re-triggers
+# this workflow, and overlapping builds would race on the same image tags.
+concurrency:
+  group: sync-upstream-build
+  cancel-in-progress: false
 
 permissions:
   contents: write # merge-upstream + tag sync
@@ -23,6 +35,8 @@ permissions:
 
 jobs:
   sync:
+    # Own pushes to main only build; there is nothing to merge.
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     outputs:
       changed: ${{ steps.detect.outputs.changed }}
@@ -78,7 +92,14 @@ jobs:
 
   build:
     needs: sync
-    if: needs.sync.outputs.changed == 'true'
+    # Build when the sync changed something (schedule/manual), or when a human
+    # pushed to main. always() is required because a skipped sync job would
+    # otherwise skip this job too.
+    if: >-
+      always() && (
+        needs.sync.outputs.changed == 'true' ||
+        (github.event_name == 'push' && github.actor != 'github-actions[bot]')
+      )
     name: Build & push (${{ matrix.arch }})
     strategy:
       fail-fast: false
