@@ -120,6 +120,8 @@ credentials exist, never rejects), then gate in the handler:
   `imagetools create` manifest) when main moved or a new tag appeared; human
   pushes to `main` also trigger the build (`actor != 'github-actions[bot]'`
   filter prevents the workflow's own merge push from double-building).
+  Pushing any tag triggers the build directly from the tagged commit and
+  additionally publishes `ghcr.io/qjx12388/new-api:<tag>`.
 - Pushing commits that touch `.github/workflows/**` requires a PAT with the
   `workflow` scope (fine-grained: Repository permissions → Workflows: R/W).
 - Git credentials are in macOS keychain (`osxkeychain` helper); verify with
