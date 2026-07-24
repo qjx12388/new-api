@@ -128,6 +128,7 @@ const paymentSchema = z.object({
       })
     }
   }),
+  EpayDisplayCurrencyAmountEnabled: z.boolean(),
   AmountDiscount: z.string().superRefine((value, ctx) => {
     const error = getJsonError(
       value,
@@ -361,6 +362,10 @@ export function PaymentSettingsSection({
 
   const { isSubmitting } = form.formState
 
+  const epayDisplayCurrencyAmount = form.watch(
+    'EpayDisplayCurrencyAmountEnabled'
+  )
+
   const setPaymentValue = React.useCallback(
     (
       key: keyof PaymentFormValues,
@@ -427,6 +432,7 @@ export function PaymentSettingsSection({
       PayMethods: values.PayMethods.trim(),
       AmountOptions: values.AmountOptions.trim(),
       AmountDiscount: values.AmountDiscount.trim(),
+      EpayDisplayCurrencyAmountEnabled: values.EpayDisplayCurrencyAmountEnabled,
       StripeApiSecret: values.StripeApiSecret.trim(),
       StripeWebhookSecret: values.StripeWebhookSecret.trim(),
       StripePriceId: values.StripePriceId.trim(),
@@ -471,6 +477,8 @@ export function PaymentSettingsSection({
       PayMethods: initialRef.current.PayMethods.trim(),
       AmountOptions: initialRef.current.AmountOptions.trim(),
       AmountDiscount: initialRef.current.AmountDiscount.trim(),
+      EpayDisplayCurrencyAmountEnabled:
+        initialRef.current.EpayDisplayCurrencyAmountEnabled,
       StripeApiSecret: initialRef.current.StripeApiSecret.trim(),
       StripeWebhookSecret: initialRef.current.StripeWebhookSecret.trim(),
       StripePriceId: initialRef.current.StripePriceId.trim(),
@@ -559,6 +567,16 @@ export function PaymentSettingsSection({
       updates.push({
         key: 'payment_setting.amount_discount',
         value: sanitized.AmountDiscount,
+      })
+    }
+
+    if (
+      sanitized.EpayDisplayCurrencyAmountEnabled !==
+      initial.EpayDisplayCurrencyAmountEnabled
+    ) {
+      updates.push({
+        key: 'payment_setting.epay_display_currency_amount_enabled',
+        value: String(sanitized.EpayDisplayCurrencyAmountEnabled),
       })
     }
 
@@ -917,7 +935,7 @@ export function PaymentSettingsSection({
                         </FormControl>
                         <FormDescription>
                           {t(
-                            'How much to charge for each US dollar of balance (Epay)'
+                            'How much to charge for each US dollar of balance (Epay). Ignored when the quota display type is CNY — recharge amounts are then charged 1:1 in CNY.'
                           )}
                         </FormDescription>
                         <FormMessage />
@@ -930,7 +948,7 @@ export function PaymentSettingsSection({
                     name='MinTopUp'
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{t('Minimum top-up (USD)')}</FormLabel>
+                        <FormLabel>{t('Minimum top-up')}</FormLabel>
                         <FormControl>
                           <Input
                             type='number'
@@ -940,13 +958,40 @@ export function PaymentSettingsSection({
                           />
                         </FormControl>
                         <FormDescription>
-                          {t('Smallest USD amount users can recharge (Epay)')}
+                          {t(
+                            'Smallest amount users can recharge (Epay), in display currency units (USD or CNY)'
+                          )}
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
                 </div>
+
+                <FormField
+                  control={form.control}
+                  name='EpayDisplayCurrencyAmountEnabled'
+                  render={({ field }) => (
+                    <SettingsSwitchItem>
+                      <SettingsSwitchContent>
+                        <FormLabel>
+                          {t('Top-up amounts in display currency')}
+                        </FormLabel>
+                        <FormDescription>
+                          {t(
+                            'When enabled and the quota display type is CNY, recharge amounts (presets, minimum, custom input) are denominated in CNY and charged 1:1 — the Price field above is ignored. When disabled, amounts are in USD and converted via Price.'
+                          )}
+                        </FormDescription>
+                      </SettingsSwitchContent>
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                      </FormControl>
+                    </SettingsSwitchItem>
+                  )}
+                />
 
                 <FormField
                   control={form.control}
@@ -1043,6 +1088,9 @@ export function PaymentSettingsSection({
                             <AmountOptionsVisualEditor
                               value={field.value}
                               onChange={field.onChange}
+                              displayCurrencyAmountEnabled={
+                                epayDisplayCurrencyAmount
+                              }
                             />
                           ) : (
                             <Textarea
@@ -1056,7 +1104,9 @@ export function PaymentSettingsSection({
                           )}
                         </FormControl>
                         <FormDescription>
-                          {t('Preset recharge amounts (JSON array)')}
+                          {t(
+                            'Preset recharge amounts in display currency units (JSON array)'
+                          )}
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
@@ -1099,6 +1149,9 @@ export function PaymentSettingsSection({
                             <AmountDiscountVisualEditor
                               value={field.value}
                               onChange={field.onChange}
+                              displayCurrencyAmountEnabled={
+                                epayDisplayCurrencyAmount
+                              }
                             />
                           ) : (
                             <Textarea

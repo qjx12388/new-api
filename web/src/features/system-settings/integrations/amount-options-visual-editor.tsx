@@ -24,6 +24,7 @@ import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useSystemConfig } from '@/hooks/use-system-config'
 
 import { safeJsonParseWithValidation } from '../utils/json-parser'
 import { isArray } from '../utils/json-validators'
@@ -31,13 +32,21 @@ import { isArray } from '../utils/json-validators'
 type AmountOptionsVisualEditorProps = {
   value: string
   onChange: (value: string) => void
+  displayCurrencyAmountEnabled?: boolean
 }
 
 export function AmountOptionsVisualEditor({
   value,
   onChange,
+  displayCurrencyAmountEnabled = false,
 }: AmountOptionsVisualEditorProps) {
   const { t } = useTranslation()
+  const { currency } = useSystemConfig()
+  // ¥ only when amounts are CNY-denominated (display type CNY + toggle on)
+  const amountSymbol =
+    displayCurrencyAmountEnabled && currency?.quotaDisplayType === 'CNY'
+      ? '¥'
+      : '$'
   const [newAmount, setNewAmount] = useState('')
 
   const amounts = useMemo(() => {
@@ -94,7 +103,9 @@ export function AmountOptionsVisualEditor({
     <div className='space-y-4'>
       <div>
         <p className='text-muted-foreground mb-3 text-sm'>
-          {t('Preset recharge amounts displayed to users')}
+          {t(
+            'Preset recharge amounts displayed to users (in display currency: USD or CNY)'
+          )}
         </p>
 
         {amounts.length === 0 ? (
@@ -112,7 +123,10 @@ export function AmountOptionsVisualEditor({
                 className='text-base'
                 copyable={false}
               >
-                <span className='font-mono'>${amount}</span>
+                <span className='font-mono'>
+                  {amountSymbol}
+                  {amount}
+                </span>
                 <Button
                   type='button'
                   variant='ghost'
@@ -123,7 +137,9 @@ export function AmountOptionsVisualEditor({
                     handleRemove(amount)
                   }}
                   className='hover:bg-muted-foreground/20 size-auto p-0.5'
-                  aria-label={t('Remove ${{amount}}', { amount })}
+                  aria-label={t('Remove {{amount}}', {
+                    amount: `${amountSymbol}${amount}`,
+                  })}
                 >
                   <X className='h-3.5 w-3.5' />
                 </Button>

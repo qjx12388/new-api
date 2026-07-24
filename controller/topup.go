@@ -118,7 +118,9 @@ func GetTopUpInfo(c *gin.Context) {
 		"waffo_pancake_min_topup": setting.WaffoPancakeMinTopUp,
 		"amount_options":          operation_setting.GetPaymentSetting().AmountOptions,
 		"discount":                operation_setting.GetPaymentSetting().AmountDiscount,
-		"topup_link":              common.TopUpLink,
+		// 易支付面额是否按展示货币（CNY）结算，前端据此决定面额显示是否再乘汇率
+		"display_currency_amount_enabled": operation_setting.EpayDisplayCurrencyAmountEnabled(),
+		"topup_link":                      common.TopUpLink,
 	}
 	common.ApiSuccess(c, data)
 }
@@ -161,7 +163,8 @@ func getPayMoney(amount int64, group string) float64 {
 	}
 
 	dTopupGroupRatio := decimal.NewFromFloat(topupGroupRatio)
-	dPrice := decimal.NewFromFloat(operation_setting.Price)
+	// CNY 展示时面额即人民币，按 1:1 结算；其余展示类型按 Price（本币/美元）换算
+	dPrice := decimal.NewFromFloat(operation_setting.EpayPricePerUnit())
 	// apply optional preset discount by the original request amount (if configured), default 1.0
 	discount := 1.0
 	if ds, ok := operation_setting.GetPaymentSetting().AmountDiscount[int(amount)]; ok {
@@ -395,9 +398,7 @@ func EpayNotify(c *gin.Context) {
 			}
 			//user, _ := model.GetUserById(topUp.UserId, false)
 			//user.Quota += topUp.Amount * 500000
-			dAmount := decimal.NewFromInt(int64(topUp.Amount))
-			dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
-			quotaToAdd := int(dAmount.Mul(dQuotaPerUnit).IntPart())
+			quotaToAdd := operation_setting.EpayTopupAmountToQuota(topUp.Amount)
 			err = model.IncreaseUserQuota(topUp.UserId, quotaToAdd, true)
 			if err != nil {
 				logger.LogError(c.Request.Context(), fmt.Sprintf("易支付 更新用户额度失败 trade_no=%s user_id=%d client_ip=%s quota_to_add=%d error=%q topup=%q", topUp.TradeNo, topUp.UserId, c.ClientIP(), quotaToAdd, err.Error(), common.GetJsonString(topUp)))

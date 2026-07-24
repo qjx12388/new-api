@@ -304,7 +304,9 @@ export function PaymentMethodDialog({
                   />
                 </FormControl>
                 <FormDescription>
-                  {t('Optional minimum recharge amount for this method.')}
+                  {t(
+                    'Optional minimum recharge amount for this method, in display currency units (USD or CNY).'
+                  )}
                 </FormDescription>
                 <FormMessage />
               </FormItem>
