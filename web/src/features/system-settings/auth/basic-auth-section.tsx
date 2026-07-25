@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
+import { useQuery } from '@tanstack/react-query'
 import { useMemo } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -31,8 +32,17 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { getGroups } from '@/features/users/api'
 
 import {
   SettingsForm,
@@ -53,7 +63,12 @@ const basicAuthSchema = z.object({
   EmailDomainRestrictionEnabled: z.boolean(),
   EmailAliasRestrictionEnabled: z.boolean(),
   EmailDomainWhitelist: z.string(),
+  DefaultNewUserGroup: z.string(),
 })
+
+// The select component disallows empty-string item values, so the "no default
+// group" option uses a sentinel that maps to/from '' on the way in and out.
+const DEFAULT_GROUP_SENTINEL = '__default__'
 
 type BasicAuthFormValues = z.infer<typeof basicAuthSchema>
 
@@ -64,6 +79,13 @@ type BasicAuthSectionProps = {
 export function BasicAuthSection({ defaultValues }: BasicAuthSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
+
+  const { data: groupsData } = useQuery({
+    queryKey: ['groups'],
+    queryFn: getGroups,
+    staleTime: 5 * 60 * 1000,
+  })
+  const groups = groupsData?.data || []
 
   const formDefaults = useMemo<BasicAuthFormValues>(
     () => ({
@@ -263,6 +285,60 @@ export function BasicAuthSection({ defaultValues }: BasicAuthSectionProps) {
                   />
                 </FormControl>
               </SettingsSwitchItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='DefaultNewUserGroup'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Default Group for New Users')}</FormLabel>
+                <Select
+                  items={[
+                    {
+                      value: DEFAULT_GROUP_SENTINEL,
+                      label: t('Default (default)'),
+                    },
+                    ...groups.map((group) => ({
+                      value: group,
+                      label: group,
+                    })),
+                  ]}
+                  value={
+                    field.value === '' ? DEFAULT_GROUP_SENTINEL : field.value
+                  }
+                  onValueChange={(value) =>
+                    field.onChange(
+                      value === DEFAULT_GROUP_SENTINEL ? '' : value
+                    )
+                  }
+                >
+                  <FormControl>
+                    <SelectTrigger>
+                      <SelectValue placeholder={t('Default (default)')} />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectGroup>
+                      <SelectItem value={DEFAULT_GROUP_SENTINEL}>
+                        {t('Default (default)')}
+                      </SelectItem>
+                      {groups.map((group) => (
+                        <SelectItem key={group} value={group}>
+                          {group}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <FormDescription>
+                  {t(
+                    'Automatically assign newly registered users to this group; leave empty to use the default group'
+                  )}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
             )}
           />
 
