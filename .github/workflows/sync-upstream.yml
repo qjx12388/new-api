@@ -59,8 +59,25 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh api repos/${{ github.repository }}/merge-upstream \
-            -f branch=main
+          # Retry transient GitHub API failures (5xx/network); a real merge
+          # conflict (409) fails immediately and still needs manual resolution.
+          for attempt in 1 2 3; do
+            if out=$(gh api repos/${{ github.repository }}/merge-upstream -f branch=main 2>&1); then
+              echo "$out"
+              break
+            fi
+            echo "$out"
+            if echo "$out" | grep -q '409'; then
+              echo "::error::merge-upstream returned 409 (diverged); resolve manually per workflow comments"
+              exit 1
+            fi
+            if [ "$attempt" = 3 ]; then
+              echo "::error::merge-upstream failed after 3 attempts"
+              exit 1
+            fi
+            echo "merge-upstream attempt $attempt failed, retrying in 30s..."
+            sleep 30
+          done
 
       - name: Sync upstream tags and detect changes
         id: detect
