@@ -2,14 +2,10 @@ name: Sync Fork with Upstream
 
 # Hourly: merge upstream (QuantumNous/new-api) into this fork's main branch
 # using GitHub's merge-upstream API, and sync upstream tags into the fork.
-# If main was advanced or a new upstream tag appeared, build the Docker image
-# with the repository's Dockerfile as-is and push ghcr.io/qjx12388/new-api:latest.
-#
-# Pushing your own commits to main skips the sync and builds the image
-# directly. Pushing a tag also builds directly, from the tagged commit, and
-# additionally publishes ghcr.io/qjx12388/new-api:<tag>. Pushes made by this
-# workflow itself (github-actions[bot], from merge-upstream) do not trigger a
-# second build.
+# Builds happen ONLY for new tags: when the sync sees a new upstream tag, or
+# when a tag is pushed directly (built from the tagged commit and additionally
+# published as ghcr.io/qjx12388/new-api:<tag>). Plain pushes to main and
+# upstream merges that only advance main do NOT build the image.
 #
 # If upstream has diverged in a way that conflicts with local changes,
 # the merge-upstream API returns 409 and the run fails — resolve manually:
@@ -38,11 +34,11 @@ permissions:
 
 jobs:
   sync:
-    # Own pushes to main only build; there is nothing to merge.
+    # Runs on schedule/manual dispatch only; push events have nothing to merge.
     if: github.event_name != 'push'
     runs-on: ubuntu-latest
     outputs:
-      changed: ${{ steps.detect.outputs.changed }}
+      tag_changed: ${{ steps.detect.outputs.tag_changed }}
     steps:
       - name: Checkout (full history and tags)
         uses: actions/checkout@v4
@@ -104,21 +100,17 @@ jobs:
           fi
 
           echo "merged=$merged tag_changed=$tag_changed latest_tag=$latest_tag"
-          changed=false
-          if [ "$merged" = "true" ] || [ "$tag_changed" = "true" ]; then
-            changed=true
-          fi
-          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          echo "tag_changed=$tag_changed" >> "$GITHUB_OUTPUT"
 
   build:
     needs: sync
-    # Build when the sync changed something (schedule/manual), or when a human
-    # pushed to main. always() is required because a skipped sync job would
-    # otherwise skip this job too.
+    # Build only for new tags: the sync saw a new upstream tag (schedule/manual),
+    # or a tag was pushed directly. Pushes to main never build. always() is
+    # required because a skipped sync job would otherwise skip this job too.
     if: >-
       always() && (
-        needs.sync.outputs.changed == 'true' ||
-        (github.event_name == 'push' && github.actor != 'github-actions[bot]')
+        needs.sync.outputs.tag_changed == 'true' ||
+        (github.event_name == 'push' && github.ref_type == 'tag' && github.actor != 'github-actions[bot]')
       )
     name: Build & push (${{ matrix.arch }})
     strategy:
