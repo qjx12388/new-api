@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"gorm.io/gorm"
@@ -541,6 +542,14 @@ func (user *User) prepareForInsert(tx *gorm.DB) error {
 	user.Email = NormalizeEmail(user.Email)
 	if err := ensureEmailAvailableWithTx(tx, user.Email, 0); err != nil {
 		return err
+	}
+	// 未显式指定分组且管理员配置了默认分组时，落入该分组；分组不存在则保持空（落库为 'default'）
+	if user.Group == "" && common.DefaultNewUserGroup != "" {
+		if ratio_setting.ContainsGroupRatio(common.DefaultNewUserGroup) {
+			user.Group = common.DefaultNewUserGroup
+		} else {
+			common.SysError(fmt.Sprintf("新用户默认分组 %s 不存在，用户 %s 将落入 default 分组", common.DefaultNewUserGroup, user.Username))
+		}
 	}
 	if user.Password == "" {
 		return nil

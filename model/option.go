@@ -46,6 +46,7 @@ func InitOptionMap() {
 	common.OptionMap["TurnstileCheckEnabled"] = strconv.FormatBool(common.TurnstileCheckEnabled)
 	common.OptionMap["RegisterEnabled"] = strconv.FormatBool(common.RegisterEnabled)
 	common.OptionMap["InvitationCodeRegisterEnabled"] = strconv.FormatBool(common.InvitationCodeRegisterEnabled)
+	common.OptionMap["DefaultNewUserGroup"] = common.DefaultNewUserGroup
 	common.OptionMap["AutomaticDisableChannelEnabled"] = strconv.FormatBool(common.AutomaticDisableChannelEnabled)
 	common.OptionMap["AutomaticEnableChannelEnabled"] = strconv.FormatBool(common.AutomaticEnableChannelEnabled)
 	common.OptionMap["LogConsumeEnabled"] = strconv.FormatBool(common.LogConsumeEnabled)
@@ -378,6 +379,8 @@ func updateOptionMap(key string, value string) (err error) {
 	switch key {
 	case "EmailDomainWhitelist":
 		common.EmailDomainWhitelist = strings.Split(value, ",")
+	case "DefaultNewUserGroup":
+		common.DefaultNewUserGroup = value
 	case "SMTPServer":
 		common.SMTPServer = value
 	case "SMTPPort":
