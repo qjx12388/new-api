@@ -113,6 +113,15 @@ Runtime notes:
 - Usage: `useTranslation()` hook, call `t('English key')` in components
 - CLI tools: `bun run i18n:sync` (from `web/`)
 
+## Fork customizations (qjx12388/new-api)
+
+本站为 CodeT（aiapi.corrin.cc）运营的 fork，与上游 QuantumNous/new-api 保持 sync（`sync-upstream.yml` 每小时合并上游 main + 同步 tag）。fork 自有改动：
+
+- **多语言文档链接**：`web/src/hooks/use-top-nav-links.ts` 的 `DOCS_LANG_PATH_PREFIX` 把界面语言码映射为文档站路径前缀，顶部导航「文档」外链（`docs_link`）按当前界面语言指向 `https://docs.aiapi.corrin.cc/[<lang>/]guide/`（zhCN 为默认语言无前缀）。
+- **多语言关于页**：后端 `About` option 除原来的 HTML/Markdown/URL 单值外，支持 JSON 多语言格式 `{"zhCN": "...", "en": "...", ...}`（键为界面语言码）。`web/src/features/about/utils.ts` 的 `resolveLocalizedAboutContent` 按 `i18n.language` 取对应语言，fallback 顺序：当前语言 → en → zhCN → 第一个字符串值；非 JSON 内容原样渲染（向后兼容）。线上内容为 7 语言完整 HTML，更新方式：直接改 MySQL `options` 表后重启容器刷新 OptionMap（mysql 客户端必须加 `--default-character-set=utf8mb4`，否则 UTF-8 内容被当 latin1 转存损坏）。
+- **镜像构建**：`docker-build.yml` / `docker-image-branch.yml` 已在 GitHub 上手动禁用。镜像唯一构建路径是 `sync-upstream.yml`：上游新 tag 自动构建，或手动 dispatch 时勾选 `force_build` 构建 fork 自有改动，产物 `ghcr.io/qjx12388/new-api:latest[-amd64|-arm64]`。push 到 main 不触发构建。
+- **分支约定**：日常开发在 `ai` 分支，合并到 `main` 发布；`main` 会被上游 sync 推进，合并前先把 `ai` 与 `origin/main` 同步（`sync-upstream.yml` 曾因此冲突，解决时以 `origin/main` 版本为基再加改动）。
+
 ## Rules
 
 ### Common Code Quality
