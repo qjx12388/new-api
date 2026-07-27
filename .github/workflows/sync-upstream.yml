@@ -2,8 +2,9 @@ name: Sync Fork with Upstream
 
 # Hourly: merge upstream (QuantumNous/new-api) into this fork's main branch
 # using GitHub's merge-upstream API, and sync upstream tags into the fork.
-# Builds happen ONLY for new upstream tags seen by the sync (published as
-# ghcr.io/qjx12388/new-api:latest). Plain pushes to main and upstream merges
+# Builds happen ONLY for: new upstream tags seen by the sync, or a manual
+# dispatch with force_build=true (for fork-only changes). Images are published
+# as ghcr.io/qjx12388/new-api:latest. Plain pushes to main and upstream merges
 # that only advance main do NOT build the image.
 #
 # If upstream has diverged in a way that conflicts with local changes,
@@ -17,6 +18,12 @@ on:
   schedule:
     - cron: '23 * * * *' # hourly at :23
   workflow_dispatch:
+    inputs:
+      force_build:
+        description: 'Force-build the fork image even without a new upstream tag'
+        required: true
+        type: boolean
+        default: false
   push:
     branches: [main]
 
@@ -103,10 +110,15 @@ jobs:
 
   build:
     needs: sync
-    # Build only when the sync saw a new upstream tag. Pushes to main never
-    # build. always() is required because a skipped sync job would otherwise
-    # skip this job too.
-    if: always() && needs.sync.outputs.tag_changed == 'true'
+    # Build when the sync saw a new upstream tag, or when manually dispatched
+    # with force_build=true (for shipping fork-only changes). Pushes to main
+    # never build. always() is required because a skipped sync job would
+    # otherwise skip this job too.
+    if: >-
+      always() && (
+        needs.sync.outputs.tag_changed == 'true' ||
+        (github.event_name == 'workflow_dispatch' && inputs.force_build)
+      )
     name: Build & push (${{ matrix.arch }})
     strategy:
       fail-fast: false
