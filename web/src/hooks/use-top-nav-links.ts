@@ -32,6 +32,41 @@ export type TopNavLink = {
 }
 
 /**
+ * Interface language code -> docs site path prefix.
+ * The docs site (Hexo multi-language) serves non-default languages under
+ * `/<prefix>/`; zhCN is the default language and lives at the root.
+ */
+const DOCS_LANG_PATH_PREFIX: Record<string, string> = {
+  zhCN: '',
+  en: 'en',
+  fr: 'fr',
+  ru: 'ru',
+  ja: 'ja',
+  vi: 'vi',
+  zhTW: 'zh-TW',
+}
+
+/**
+ * Point an external docs link at the localized version of the docs site by
+ * inserting the language path prefix right after the origin. Returns the
+ * original link for the default language or unparseable URLs.
+ */
+export function localizeExternalDocsLink(
+  link: string,
+  language: string
+): string {
+  const prefix = DOCS_LANG_PATH_PREFIX[language]
+  if (!prefix) return link
+  try {
+    const url = new URL(link)
+    url.pathname = `/${prefix}${url.pathname}`
+    return url.toString()
+  } catch {
+    return link
+  }
+}
+
+/**
  * Generate top navigation links based on HeaderNavModules configuration from backend /api/status
  * Backend format example (stringified JSON):
  * {
@@ -44,7 +79,7 @@ export type TopNavLink = {
  * }
  */
 export function useTopNavLinks(): TopNavLink[] {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { status } = useStatus()
   const { auth } = useAuthStore()
 
@@ -89,7 +124,11 @@ export function useTopNavLinks(): TopNavLink[] {
   // Docs (supports external links)
   if (modules?.docs !== false) {
     if (docsLink) {
-      links.push({ title: t('Docs'), href: docsLink, external: true })
+      links.push({
+        title: t('Docs'),
+        href: localizeExternalDocsLink(docsLink, i18n.language),
+        external: true,
+      })
     } else {
       links.push({ title: t('Docs'), href: '/docs' })
     }

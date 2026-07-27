@@ -115,11 +115,14 @@ credentials exist, never rejects), then gate in the handler:
 ## Operational notes
 
 - Fork workflow: `.github/workflows/sync-upstream.yml` merges upstream hourly
-  (GitHub `merge-upstream` API), syncs tags, and builds/pushes
-  `ghcr.io/qjx12388/new-api:latest` (matrix amd64/arm64 on native runners +
-  `imagetools create` manifest) when main moved or a new tag appeared; human
-  pushes to `main` also trigger the build (`actor != 'github-actions[bot]'`
-  filter prevents the workflow's own merge push from double-building).
+  (GitHub `merge-upstream` API, with retry on transient API failures) and syncs
+  tags. Builds happen ONLY for new tags: the sync seeing a new upstream tag, or
+  a direct tag push (built from the tagged commit, additionally published as
+  `ghcr.io/qjx12388/new-api:<tag>`; matrix amd64/arm64 on native runners +
+  `imagetools create` manifest). Plain pushes to `main` and upstream merges
+  that only advance main do NOT build. The same logic is patched directly on
+  `main` (scheduled runs use main's workflow), so the two copies must be kept
+  in sync manually until the branches are merged.
 - Pushing commits that touch `.github/workflows/**` requires a PAT with the
   `workflow` scope (fine-grained: Repository permissions → Workflows: R/W).
 - Git credentials are in macOS keychain (`osxkeychain` helper); verify with

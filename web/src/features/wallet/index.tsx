@@ -84,12 +84,25 @@ export function Wallet(props: WalletProps) {
   const { currency } = useSystemConfig()
   const { topupInfo, presetAmounts, loading: topupLoading } = useTopupInfo()
 
-  // Calculate effective exchange rate - when display type is USD, use rate of 1
+  // Calculate effective exchange rate for preset display.
+  // Rate of 1 when amounts are already in display currency: USD display,
+  // or CNY display with display-currency top-up amounts enabled.
   const effectiveUsdExchangeRate = useMemo(() => {
-    return currency?.quotaDisplayType === 'USD'
-      ? 1
-      : currency?.usdExchangeRate || 1
-  }, [currency?.quotaDisplayType, currency?.usdExchangeRate])
+    if (currency?.quotaDisplayType === 'USD') {
+      return 1
+    }
+    if (
+      currency?.quotaDisplayType === 'CNY' &&
+      topupInfo?.display_currency_amount_enabled
+    ) {
+      return 1
+    }
+    return currency?.usdExchangeRate || 1
+  }, [
+    currency?.quotaDisplayType,
+    currency?.usdExchangeRate,
+    topupInfo?.display_currency_amount_enabled,
+  ])
   const {
     amount: paymentAmount,
     calculating,

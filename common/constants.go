@@ -69,6 +69,7 @@ var TelegramOAuthEnabled = false
 var TurnstileCheckEnabled = false
 var RegisterEnabled = true
 var InvitationCodeRegisterEnabled = false // 邀请注册制：开启后注册必须提供有效邀请码
+var DefaultNewUserGroup = ""              // 新用户默认分组：非空时自动建号的新用户落入该分组（须为已存在的分组）
 
 var EmailDomainRestrictionEnabled = false // 是否启用邮箱域名限制
 var EmailAliasRestrictionEnabled = false  // 是否启用邮箱别名限制
