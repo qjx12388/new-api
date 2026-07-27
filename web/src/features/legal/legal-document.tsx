@@ -26,6 +26,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { isHttpUrl, isLikelyHtml } from '@/lib/content-format'
+import { resolveLocalizedContent } from '@/lib/localized-content'
 
 import type { LegalDocumentResponse } from './types'
 
@@ -42,14 +43,17 @@ export function LegalDocument({
   fetchDocument,
   emptyMessage,
 }: LegalDocumentProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { data, isLoading } = useQuery({
     queryKey: [queryKey],
     queryFn: fetchDocument,
     staleTime: 10 * 60 * 1000,
   })
 
-  const rawContent = data?.data?.trim() ?? ''
+  const rawContent = resolveLocalizedContent(
+    data?.data ?? '',
+    i18n.language
+  ).trim()
   const hasContent = rawContent.length > 0
   const isUrl = hasContent && isHttpUrl(rawContent)
   const contentIsHtml = hasContent && isLikelyHtml(rawContent)

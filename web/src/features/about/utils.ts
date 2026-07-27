@@ -17,37 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-/**
- * Resolve the about content for the active interface language.
- *
- * The backend stores a single `About` option string. Besides the legacy plain
- * HTML/Markdown/URL formats, it may hold a JSON object mapping interface
- * language codes (`zhCN`, `en`, `fr`, `ru`, `ja`, `vi`, `zhTW`) to per-language
- * content, e.g. {"zhCN": "<html...>", "en": "<html...>"}. Falls back to
- * English, then zhCN, then the first string value; non-JSON content is
- * returned unchanged so existing single-language setups keep working.
- */
-export function resolveLocalizedAboutContent(
-  raw: string,
-  language: string
-): string {
-  const trimmed = raw.trim()
-  if (!trimmed.startsWith('{')) return raw
-  try {
-    const parsed: unknown = JSON.parse(trimmed)
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      const map = parsed as Record<string, unknown>
-      const candidate =
-        map[language] ??
-        map['en'] ??
-        map['zhCN'] ??
-        Object.values(map).find((v) => typeof v === 'string')
-      if (typeof candidate === 'string' && candidate.trim().length > 0) {
-        return candidate
-      }
-    }
-  } catch {
-    // Not a JSON language map — treat as plain content.
-  }
-  return raw
-}
+// The implementation moved to @/lib/localized-content so that other
+// admin-configured documents (legal pages, ...) can share it. This alias
+// keeps the original name available for existing callers.
+export { resolveLocalizedContent as resolveLocalizedAboutContent } from '@/lib/localized-content'
