@@ -159,6 +159,9 @@ jobs:
   manifest:
     name: Create multi-arch manifest
     needs: [build]
+    # sync may fail (e.g. upstream workflow-file changes that GITHUB_TOKEN
+    # cannot push); still publish the manifest whenever the builds succeeded.
+    if: always() && needs.build.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Log in to GHCR
