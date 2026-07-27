@@ -2,10 +2,10 @@ name: Sync Fork with Upstream
 
 # Hourly: merge upstream (QuantumNous/new-api) into this fork's main branch
 # using GitHub's merge-upstream API, and sync upstream tags into the fork.
-# Builds happen ONLY for new tags: when the sync sees a new upstream tag, or
-# when a tag is pushed directly (built from the tagged commit and additionally
-# published as ghcr.io/qjx12388/new-api:<tag>). Plain pushes to main and
-# upstream merges that only advance main do NOT build the image.
+# Builds happen ONLY for: new upstream tags seen by the sync, or a manual
+# dispatch with force_build=true (for fork-only changes). Images are published
+# as ghcr.io/qjx12388/new-api:latest. Plain pushes to main and upstream merges
+# that only advance main do NOT build the image.
 #
 # If upstream has diverged in a way that conflicts with local changes,
 # the merge-upstream API returns 409 and the run fails — resolve manually:
@@ -18,9 +18,14 @@ on:
   schedule:
     - cron: '23 * * * *' # hourly at :23
   workflow_dispatch:
+    inputs:
+      force_build:
+        description: 'Force-build the fork image even without a new upstream tag'
+        required: true
+        type: boolean
+        default: false
   push:
     branches: [main]
-    tags: ['*']
 
 # Serialize sync/build runs: merge-upstream's own push to main re-triggers
 # this workflow, and overlapping builds would race on the same image tags.
@@ -75,6 +80,7 @@ jobs:
             sleep 30
           done
 
+
       - name: Sync upstream tags and detect changes
         id: detect
         run: |
@@ -104,13 +110,14 @@ jobs:
 
   build:
     needs: sync
-    # Build only for new tags: the sync saw a new upstream tag (schedule/manual),
-    # or a tag was pushed directly. Pushes to main never build. always() is
-    # required because a skipped sync job would otherwise skip this job too.
+    # Build when the sync saw a new upstream tag, or when manually dispatched
+    # with force_build=true (for shipping fork-only changes). Pushes to main
+    # never build. always() is required because a skipped sync job would
+    # otherwise skip this job too.
     if: >-
       always() && (
         needs.sync.outputs.tag_changed == 'true' ||
-        (github.event_name == 'push' && github.ref_type == 'tag' && github.actor != 'github-actions[bot]')
+        (github.event_name == 'workflow_dispatch' && inputs.force_build)
       )
     name: Build & push (${{ matrix.arch }})
     strategy:
@@ -138,15 +145,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Resolve image tags
-        id: imagetags
-        run: |
-          TAGS="ghcr.io/qjx12388/new-api:latest-${{ matrix.arch }}"
-          if [ "${{ github.ref_type }}" = "tag" ]; then
-            TAGS="$TAGS,ghcr.io/qjx12388/new-api:${GITHUB_REF_NAME}-${{ matrix.arch }}"
-          fi
-          echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
-
       - name: Build and push image
         uses: docker/build-push-action@v6
         with:
@@ -154,16 +152,13 @@ jobs:
           file: ./Dockerfile # upstream Dockerfile, unmodified
           platforms: ${{ matrix.platform }}
           push: true
-          tags: ${{ steps.imagetags.outputs.tags }}
+          tags: ghcr.io/qjx12388/new-api:latest-${{ matrix.arch }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   manifest:
     name: Create multi-arch manifest
     needs: [build]
-    # always() is required: sync may be skipped (push events), and a skipped
-    # ancestor would otherwise skip this job even when build succeeded.
-    if: always() && needs.build.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Log in to GHCR
@@ -179,11 +174,3 @@ jobs:
             -t ghcr.io/qjx12388/new-api:latest \
             ghcr.io/qjx12388/new-api:latest-amd64 \
             ghcr.io/qjx12388/new-api:latest-arm64
-
-      - name: Create & push manifest (version tag)
-        if: github.ref_type == 'tag'
-        run: |
-          docker buildx imagetools create \
-            -t ghcr.io/qjx12388/new-api:${GITHUB_REF_NAME} \
-            ghcr.io/qjx12388/new-api:${GITHUB_REF_NAME}-amd64 \
-            ghcr.io/qjx12388/new-api:${GITHUB_REF_NAME}-arm64
