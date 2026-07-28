@@ -1,11 +1,19 @@
 name: Sync Fork with Upstream
 
 # Hourly: merge upstream (QuantumNous/new-api) into this fork's main branch
-# using GitHub's merge-upstream API, and sync upstream tags into the fork.
+# using GitHub's merge-upstream API, sync upstream tags into the fork, and
+# fast-forward the ai branch onto main (ai carries fork-only changes).
+#
 # Builds happen ONLY for: new upstream tags seen by the sync, or a manual
-# dispatch with force_build=true (for fork-only changes). Images are published
-# as ghcr.io/qjx12388/new-api:latest. Plain pushes to main and upstream merges
-# that only advance main do NOT build the image.
+# dispatch with force_build=true (for fork-only changes). Plain pushes to main
+# and upstream merges that only advance main do NOT build the image.
+#
+# 打包规则（fork 自有版本）：
+#   每次构建基于 ai 分支，新增一个 tag：<上游最新版本>-<单字母>。
+#   例如上游最新 tag 是 v1.0.0-rc.22，则我们的版本依次为
+#   v1.0.0-rc.22-a、-b、-c……；上游发布新版本后字母重置为 a。
+#   镜像同时推送 ghcr.io/qjx12388/new-api:latest[-<arch>]（服务器 compose 用）
+#   和 ghcr.io/qjx12388/new-api:<version>[-<arch>]（可追溯）。
 #
 # If upstream has diverged in a way that conflicts with local changes,
 # the merge-upstream API returns 409 and the run fails — resolve manually:
@@ -13,6 +21,7 @@ name: Sync Fork with Upstream
 #   git fetch upstream
 #   git merge upstream/main   # resolve conflicts
 #   git push origin main
+# ai 与 main 的合并冲突同理手动解决后推送 ai。
 
 on:
   schedule:
@@ -34,7 +43,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write # merge-upstream + tag sync
+  contents: write # merge-upstream + tag sync + ai fast-forward + version tags
   packages: write # push image to ghcr.io
 
 jobs:
@@ -80,6 +89,21 @@ jobs:
             sleep 30
           done
 
+      - name: Keep ai branch in sync with main
+        run: |
+          set -e
+          git fetch origin ai main
+          if git merge-base --is-ancestor origin/ai origin/main; then
+            # ai 落后或等于 main：直接快进
+            git push origin origin/main:refs/heads/ai
+          else
+            # ai 含未发布的 fork 改动：把 main 合并进 ai；冲突则失败需人工处理
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git checkout -B ai origin/ai
+            git merge origin/main --no-edit
+            git push origin ai
+          fi
 
       - name: Sync upstream tags and detect changes
         id: detect
@@ -108,8 +132,55 @@ jobs:
           echo "merged=$merged tag_changed=$tag_changed latest_tag=$latest_tag"
           echo "tag_changed=$tag_changed" >> "$GITHUB_OUTPUT"
 
-  build:
+  version:
     needs: sync
+    # 与 build 同条件：上游新 tag 或手动 force_build 时，为本次构建计算并创建
+    # fork 自有版本 tag（<上游最新版本>-<单字母>）。
+    if: >-
+      always() && (
+        needs.sync.outputs.tag_changed == 'true' ||
+        (github.event_name == 'workflow_dispatch' && inputs.force_build)
+      )
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.calc.outputs.version }}
+    steps:
+      - name: Checkout ai (full history and tags)
+        uses: actions/checkout@v4
+        with:
+          ref: ai
+          fetch-depth: 0
+
+      - name: Compute fork version tag
+        id: calc
+        run: |
+          set -e
+          # 上游最新版本 = 排除我们自己的 -<单字母> 形式 tag 后的最新 tag
+          base=$(git tag --sort=-v:refname | grep -vE -- '-[a-z]$' | head -n1)
+          if [ -z "$base" ]; then
+            echo "::error::no upstream tag found"
+            exit 1
+          fi
+          last=$(git tag -l "${base}-?" | sed "s/^${base}-//" | sort | tail -n1)
+          if [ -z "$last" ]; then
+            next=a
+          elif [ "$last" = "z" ]; then
+            echo "::error::version letters exhausted for ${base}"
+            exit 1
+          else
+            next=$(echo "$last" | tr 'a-y' 'b-z')
+          fi
+          version="${base}-${next}"
+          echo "computed version: $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$version"
+          git push origin "refs/tags/$version"
+
+  build:
+    needs: [sync, version]
     # Build when the sync saw a new upstream tag, or when manually dispatched
     # with force_build=true (for shipping fork-only changes). Pushes to main
     # never build. always() is required because a skipped sync job would
@@ -132,8 +203,10 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
-      - name: Checkout
+      - name: Checkout ai
         uses: actions/checkout@v4
+        with:
+          ref: ai
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -152,13 +225,15 @@ jobs:
           file: ./Dockerfile # upstream Dockerfile, unmodified
           platforms: ${{ matrix.platform }}
           push: true
-          tags: ghcr.io/qjx12388/new-api:latest-${{ matrix.arch }}
+          tags: |
+            ghcr.io/qjx12388/new-api:latest-${{ matrix.arch }}
+            ghcr.io/qjx12388/new-api:${{ needs.version.outputs.version }}-${{ matrix.arch }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   manifest:
     name: Create multi-arch manifest
-    needs: [build]
+    needs: [version, build]
     # sync may fail (e.g. upstream workflow-file changes that GITHUB_TOKEN
     # cannot push); still publish the manifest whenever the builds succeeded.
     if: always() && needs.build.result == 'success'
@@ -171,9 +246,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create & push manifest (latest)
+      - name: Create & push manifests (latest + fork version)
         run: |
           docker buildx imagetools create \
             -t ghcr.io/qjx12388/new-api:latest \
+            -t ghcr.io/qjx12388/new-api:${{ needs.version.outputs.version }} \
             ghcr.io/qjx12388/new-api:latest-amd64 \
             ghcr.io/qjx12388/new-api:latest-arm64

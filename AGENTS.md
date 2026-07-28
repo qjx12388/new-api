@@ -119,8 +119,9 @@ Runtime notes:
 
 - **多语言文档链接**：`web/src/hooks/use-top-nav-links.ts` 的 `DOCS_LANG_PATH_PREFIX` 把界面语言码映射为文档站路径前缀，顶部导航「文档」外链（`docs_link`）按当前界面语言指向 `https://docs.aiapi.corrin.cc/[<lang>/]guide/`（zhCN 为默认语言无前缀）。
 - **多语言关于页**：后端 `About` option 除原来的 HTML/Markdown/URL 单值外，支持 JSON 多语言格式 `{"zhCN": "...", "en": "...", ...}`（键为界面语言码）。`web/src/features/about/utils.ts` 的 `resolveLocalizedAboutContent` 按 `i18n.language` 取对应语言，fallback 顺序：当前语言 → en → zhCN → 第一个字符串值；非 JSON 内容原样渲染（向后兼容）。线上内容为 7 语言完整 HTML，更新方式：直接改 MySQL `options` 表后重启容器刷新 OptionMap（mysql 客户端必须加 `--default-character-set=utf8mb4`，否则 UTF-8 内容被当 latin1 转存损坏）。
-- **镜像构建**：`docker-build.yml` / `docker-image-branch.yml` 已在 GitHub 上手动禁用。镜像唯一构建路径是 `sync-upstream.yml`：上游新 tag 自动构建，或手动 dispatch 时勾选 `force_build` 构建 fork 自有改动，产物 `ghcr.io/qjx12388/new-api:latest[-amd64|-arm64]`。push 到 main 不触发构建。
-- **分支约定**：日常开发在 `ai` 分支，合并到 `main` 发布；`main` 会被上游 sync 推进，合并前先把 `ai` 与 `origin/main` 同步（`sync-upstream.yml` 曾因此冲突，解决时以 `origin/main` 版本为基再加改动）。
+- **镜像构建**：`docker-build.yml` / `docker-image-branch.yml` 已在 GitHub 上手动禁用。镜像唯一构建路径是 `sync-upstream.yml`：上游新 tag 自动构建，或手动 dispatch 时勾选 `force_build` 构建 fork 自有改动。**构建基于 `ai` 分支**，产物为 `ghcr.io/qjx12388/new-api:latest[-amd64|-arm64]`（服务器 compose 用）加 fork 自有版本 tag 同名镜像。push 到 main 不触发构建。
+- **版本 tag 规则**：每次构建由 workflow 的 `version` job 自动创建 tag `<上游最新版本>-<单字母>`（如上游最新为 `v1.0.0-rc.22`，则依次为 `v1.0.0-rc.22-a`、`-b`、`-c`……；上游发布新版本后字母重置为 `a`）。tag 指向构建时 ai 的 HEAD。
+- **分支约定**：日常开发在 `ai` 分支，改完直接 dispatch force_build 即可发布，无需手动合 main；`main` 只承载上游 sync（merge-upstream API 每小时合并上游 main），sync 后 workflow 自动把 ai 快进/合并到 main 保持同步（冲突则 run 失败，人工按 `origin/main` 为基解决）。
 
 ## Rules
 
