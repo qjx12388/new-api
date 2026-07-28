@@ -177,7 +177,21 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag "$version"
-          git push origin "refs/tags/$version"
+
+      - name: Push version tag (PAT 优先以触发 release.yml)
+        env:
+          # GITHUB_TOKEN 推送的 tag 不会触发其他 workflow（GitHub 防递归限制），
+          # 用 PAT 推送才能让 release.yml 自动生成带二进制产物的 GitHub Release。
+          RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
+        run: |
+          set -e
+          version="${{ steps.calc.outputs.version }}"
+          if [ -n "$RELEASE_PAT" ]; then
+            git push "https://x-access-token:${RELEASE_PAT}@github.com/${{ github.repository }}.git" "refs/tags/$version"
+          else
+            echo "::warning::secrets.RELEASE_PAT 未配置，tag 用 GITHUB_TOKEN 推送——release.yml 不会自动触发，需在 GitHub Settings > Secrets 添加 RELEASE_PAT（repo+workflow 权限）"
+            git push origin "refs/tags/$version"
+          fi
 
   build:
     needs: [sync, version]
