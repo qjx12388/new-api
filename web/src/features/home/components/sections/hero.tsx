@@ -223,11 +223,16 @@ export function Hero(props: HeroProps) {
                 <span>CC Switch</span>
               </a>
 
-              {/* "更多" */}
-              <div className='group border-border/40 bg-muted/15 text-foreground/55 hover:border-border hover:bg-muted/30 hover:text-foreground flex cursor-default items-center gap-2.5 rounded-full border px-5 py-2.5 text-sm font-medium shadow-[0_1px_2.5px_rgba(0,0,0,0.01)] backdrop-blur-xs transition-all duration-300 hover:scale-[1.02]'>
+              {/* "更多"：链接到文档站客户端指南（覆盖全部支持的一键配置客户端） */}
+              <a
+                href='https://docs.aiapi.corrin.cc/guide/'
+                target='_blank'
+                rel='noopener noreferrer'
+                className='group border-border/40 bg-muted/15 text-foreground/55 hover:border-border hover:bg-muted/30 hover:text-foreground flex items-center gap-2.5 rounded-full border px-5 py-2.5 text-sm font-medium shadow-[0_1px_2.5px_rgba(0,0,0,0.01)] backdrop-blur-xs transition-all duration-300 hover:scale-[1.02]'
+              >
                 <MoreIcon />
                 <span>{t('More Apps')}</span>
-              </div>
+              </a>
             </div>
           </div>
         </div>
