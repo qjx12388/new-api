@@ -105,6 +105,21 @@ jobs:
             git push origin ai
           fi
 
+      - name: Sync workflow files from ai to main
+        run: |
+          set -e
+          # A 方案（用户拍板）：.github/workflows/ 是 ai→main 的唯一例外目录，
+          # 文件拷贝式同步（非 merge，无冲突），main 的代码内容仍只来自上游。
+          git fetch origin ai main
+          if ! git diff --quiet origin/main origin/ai -- .github/workflows/; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git checkout -B main origin/main
+            git checkout origin/ai -- .github/workflows/
+            git commit -m "chore: sync .github/workflows from ai [skip ci]"
+            git push origin main
+          fi
+
       - name: Sync upstream tags and detect changes
         id: detect
         run: |
