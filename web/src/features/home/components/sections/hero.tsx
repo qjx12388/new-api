@@ -18,10 +18,25 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { CherryStudio } from '@lobehub/icons'
 import { Link } from '@tanstack/react-router'
-import { ArrowRight, BookOpen } from 'lucide-react'
+import { ArrowRight, BookOpen, ExternalLink, Loader2 } from 'lucide-react'
+import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { fetchActiveChatKey } from '@/features/chat/hooks/use-active-chat-key'
+import { useChatPresets } from '@/features/chat/hooks/use-chat-presets'
+import {
+  chatLinkRequiresApiKey,
+  resolveChatUrl,
+  type ChatPreset,
+} from '@/features/chat/lib/chat-links'
 import { useStatus } from '@/hooks/use-status'
 
 import { HeroTerminalDemo } from '../hero-terminal-demo'
@@ -44,6 +59,116 @@ const MoreIcon = () => (
     <circle cx='18' cy='12' r='2' fill='currentColor' />
   </svg>
 )
+
+/**
+ * 「更多」应用下拉：复用控制台「聊天」的同一数据源（status.chats）与解析逻辑，
+ * web 类跳转 /chat/$chatId（未登录会被路由守卫带去登录），自定义协议类取启用中的
+ * API 密钥拼好一键导入链接后直接打开，行为与控制台侧栏完全一致。
+ */
+function MoreAppsDropdown() {
+  const { t } = useTranslation()
+  const { chatPresets, serverAddress } = useChatPresets()
+  const [loadingPresetId, setLoadingPresetId] = useState<string | null>(null)
+
+  const visiblePresets = useMemo(
+    () => chatPresets.filter((preset) => preset.type !== 'fluent'),
+    [chatPresets]
+  )
+
+  const handleOpenExternal = useCallback(
+    async (preset: ChatPreset) => {
+      if (preset.type === 'web') return
+
+      const needsKey = chatLinkRequiresApiKey(preset.url)
+      let activeKey: string | undefined
+
+      if (needsKey) {
+        setLoadingPresetId(preset.id)
+        try {
+          activeKey = await fetchActiveChatKey()
+        } catch (error) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : t(
+                  'Unable to prepare chat link. Please ensure you have an enabled API key.'
+                )
+          toast.error(message)
+          return
+        } finally {
+          setLoadingPresetId(null)
+        }
+      }
+
+      const url = resolveChatUrl({
+        template: preset.url,
+        apiKey: needsKey ? activeKey : undefined,
+        serverAddress,
+      })
+
+      if (!url) {
+        toast.error(t('Invalid chat link. Please contact the administrator.'))
+        return
+      }
+
+      window.open(url, '_blank', 'noopener')
+    },
+    [serverAddress, t]
+  )
+
+  // 后端未配置 chats 时保持可用：回退到文档站客户端指南
+  if (visiblePresets.length === 0) {
+    return (
+      <a
+        href='https://docs.aiapi.corrin.cc/guide/'
+        target='_blank'
+        rel='noopener noreferrer'
+        className='group border-border/40 bg-muted/15 text-foreground/55 hover:border-border hover:bg-muted/30 hover:text-foreground flex items-center gap-2.5 rounded-full border px-5 py-2.5 text-sm font-medium shadow-[0_1px_2.5px_rgba(0,0,0,0.01)] backdrop-blur-xs transition-all duration-300 hover:scale-[1.02]'
+      >
+        <MoreIcon />
+        <span>{t('More Apps')}</span>
+      </a>
+    )
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger className='group border-border/40 bg-muted/15 text-foreground/55 hover:border-border hover:bg-muted/30 hover:text-foreground flex items-center gap-2.5 rounded-full border px-5 py-2.5 text-sm font-medium shadow-[0_1px_2.5px_rgba(0,0,0,0.01)] backdrop-blur-xs transition-all duration-300 hover:scale-[1.02]'>
+        <MoreIcon />
+        <span>{t('More Apps')}</span>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align='start'>
+        {visiblePresets.map((preset) =>
+          preset.type === 'web' ? (
+            <DropdownMenuItem
+              key={preset.id}
+              render={
+                <Link to='/chat/$chatId' params={{ chatId: preset.id }} />
+              }
+            >
+              {preset.name}
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem
+              key={preset.id}
+              disabled={loadingPresetId === preset.id}
+              onClick={() => {
+                if (loadingPresetId === null) void handleOpenExternal(preset)
+              }}
+            >
+              {preset.name}
+              {loadingPresetId === preset.id ? (
+                <Loader2 className='ml-auto h-4 w-4 animate-spin opacity-70' />
+              ) : (
+                <ExternalLink className='ml-auto h-4 w-4 opacity-70' />
+              )}
+            </DropdownMenuItem>
+          )
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
 
 export function Hero(props: HeroProps) {
   const { t } = useTranslation()
@@ -223,16 +348,8 @@ export function Hero(props: HeroProps) {
                 <span>CC Switch</span>
               </a>
 
-              {/* "更多"：链接到文档站客户端指南（覆盖全部支持的一键配置客户端） */}
-              <a
-                href='https://docs.aiapi.corrin.cc/guide/'
-                target='_blank'
-                rel='noopener noreferrer'
-                className='group border-border/40 bg-muted/15 text-foreground/55 hover:border-border hover:bg-muted/30 hover:text-foreground flex items-center gap-2.5 rounded-full border px-5 py-2.5 text-sm font-medium shadow-[0_1px_2.5px_rgba(0,0,0,0.01)] backdrop-blur-xs transition-all duration-300 hover:scale-[1.02]'
-              >
-                <MoreIcon />
-                <span>{t('More Apps')}</span>
-              </a>
+              {/* "更多"：下拉展示控制台「聊天」同源的支持工具清单 */}
+              <MoreAppsDropdown />
             </div>
           </div>
         </div>
