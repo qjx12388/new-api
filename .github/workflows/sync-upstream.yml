@@ -45,6 +45,7 @@ concurrency:
 permissions:
   contents: write # merge-upstream + tag sync + ai fast-forward + version tags
   packages: write # push image to ghcr.io
+  actions: write # 允许 version job dispatch release.yml（workflow_dispatch API 需要）
 
 jobs:
   sync:
@@ -207,6 +208,16 @@ jobs:
             echo "::warning::secrets.RELEASE_PAT 未配置，tag 用 GITHUB_TOKEN 推送——release.yml 不会自动触发，需在 GitHub Settings > Secrets 添加 RELEASE_PAT（repo+workflow 权限）"
             git push origin "refs/tags/$version"
           fi
+
+      - name: Trigger release.yml for the version tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # PAT 推 tag 在部分 token 类型下仍不触发 workflow（实测），
+          # 这里直接 workflow_dispatch release.yml，确定性触发。
+          # release.yml 用 git describe --tags 取版本号，ref 传 tag 即可。
+          gh api repos/${{ github.repository }}/actions/workflows/release.yml/dispatches \
+            -f ref="${{ steps.calc.outputs.version }}"
 
   build:
     needs: [sync, version]
