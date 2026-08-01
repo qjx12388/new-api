@@ -1,12 +1,17 @@
 name: Sync Fork with Upstream
 
-# Hourly: merge upstream (QuantumNous/new-api) into this fork's main branch
-# using GitHub's merge-upstream API, sync upstream tags into the fork, and
-# fast-forward the ai branch onto main (ai carries fork-only changes).
+# 分支策略（2026-08-01 重构）：
+#   - main = 上游(QuantumNous/new-api)的纯镜像，零 fork 提交，merge-upstream 永远快进。
+#   - ai   = fork 的工作分支（默认分支），承载全部自有改动与全部 workflow。
+#   - 定时任务只从默认分支(ai)运行，main 上不再放任何 workflow。
 #
-# Builds happen ONLY for: new upstream tags seen by the sync, or a manual
-# dispatch with force_build=true (for fork-only changes). Plain pushes to main
-# and upstream merges that only advance main do NOT build the image.
+# 同步逻辑：
+#   1. 每小时 merge-upstream 快进 main，并同步上游 tags。
+#   2. 仅当上游出现新 tag（或手动 force_build）时，才把 main 合并进 ai ——
+#      ai 只在需要构建时吸收上游代码，避免每小时无谓冲突。
+#   3. ai 合并若冲突（fork 改动的文件上游也改了，如 i18n locale），自动开
+#      issue 通知人工处理，本次运行不视为失败，tag/构建跳过。
+#   4. main 若出现 409（意味着有人直接推了 main，破坏纯镜像约定），开 issue 报警。
 #
 # 打包规则（fork 自有版本）：
 #   每次构建基于 ai 分支，新增一个 tag：<上游最新版本>-<单字母>。
@@ -15,13 +20,10 @@ name: Sync Fork with Upstream
 #   镜像同时推送 ghcr.io/qjx12388/new-api:latest[-<arch>]（服务器 compose 用）
 #   和 ghcr.io/qjx12388/new-api:<version>[-<arch>]（可追溯）。
 #
-# If upstream has diverged in a way that conflicts with local changes,
-# the merge-upstream API returns 409 and the run fails — resolve manually:
-#   git remote add upstream https://github.com/QuantumNous/new-api.git
-#   git fetch upstream
-#   git merge upstream/main   # resolve conflicts
-#   git push origin main
-# ai 与 main 的合并冲突同理手动解决后推送 ai。
+# ai 合并冲突的人工处理：
+#   git checkout ai && git fetch upstream
+#   git merge upstream/main   # 解决冲突（locale json 建议按 key 三方合并）
+#   git push origin ai
 
 on:
   schedule:
@@ -33,27 +35,26 @@ on:
         required: true
         type: boolean
         default: false
-  push:
-    branches: [main]
 
 # Serialize sync/build runs: merge-upstream's own push to main re-triggers
-# this workflow, and overlapping builds would race on the same image tags.
+# nothing (main has no workflows), but overlapping manual runs would race on
+# the same image tags.
 concurrency:
   group: sync-upstream-build
   cancel-in-progress: false
 
 permissions:
-  contents: write # merge-upstream + tag sync + ai fast-forward + version tags
+  contents: write # merge-upstream + tag sync + ai merge + version tags
   packages: write # push image to ghcr.io
+  issues: write  # ai 合并冲突 / main 409 时开 issue 报警
   actions: write # 允许 version job dispatch release.yml（workflow_dispatch API 需要）
 
 jobs:
   sync:
-    # Runs on schedule/manual dispatch only; push events have nothing to merge.
-    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     outputs:
       tag_changed: ${{ steps.detect.outputs.tag_changed }}
+      ai_ready: ${{ steps.aimerge.outputs.ai_ready }}
     steps:
       - name: Checkout (full history and tags)
         uses: actions/checkout@v4
@@ -66,12 +67,11 @@ jobs:
           echo "main_sha=$(git rev-parse origin/main)" >> "$GITHUB_OUTPUT"
           echo "tag=$(git tag --sort=-v:refname | head -n1)" >> "$GITHUB_OUTPUT"
 
-      - name: Merge upstream into main
+      - name: Merge upstream into main (fast-forward only)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Retry transient GitHub API failures (5xx/network); a real merge
-          # conflict (409) fails immediately and still needs manual resolution.
+          # main 是纯上游镜像，merge-upstream 必然快进；409 说明有人直接推了 main。
           for attempt in 1 2 3; do
             if out=$(gh api repos/${{ github.repository }}/merge-upstream -f branch=main 2>&1); then
               echo "$out"
@@ -79,7 +79,11 @@ jobs:
             fi
             echo "$out"
             if echo "$out" | grep -q '409'; then
-              echo "::error::merge-upstream returned 409 (diverged); resolve manually per workflow comments"
+              title="main 纯镜像被破坏：merge-upstream 返回 409"
+              if ! gh issue list --state open --search "$title" --json title -q '.[].title' | grep -q "$title"; then
+                gh issue create --title "$title" --body "main 应是上游纯镜像，但 merge-upstream 返回 409（run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}）。检查是否有人直接推送了 main；确认后执行：\n\n\`\`\`bash\ngit fetch upstream\ngit push -f origin upstream/main:main\n\`\`\`"
+              fi
+              echo "::error::merge-upstream 409 —— main 不是纯镜像，已开 issue"
               exit 1
             fi
             if [ "$attempt" = 3 ]; then
@@ -90,37 +94,6 @@ jobs:
             sleep 30
           done
 
-      - name: Keep ai branch in sync with main
-        run: |
-          set -e
-          git fetch origin ai main
-          if git merge-base --is-ancestor origin/ai origin/main; then
-            # ai 落后或等于 main：直接快进
-            git push origin origin/main:refs/heads/ai
-          else
-            # ai 含未发布的 fork 改动：把 main 合并进 ai；冲突则失败需人工处理
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git checkout -B ai origin/ai
-            git merge origin/main --no-edit
-            git push origin ai
-          fi
-
-      - name: Sync workflow files from ai to main
-        run: |
-          set -e
-          # A 方案（用户拍板）：.github/workflows/ 是 ai→main 的唯一例外目录，
-          # 文件拷贝式同步（非 merge，无冲突），main 的代码内容仍只来自上游。
-          git fetch origin ai main
-          if ! git diff --quiet origin/main origin/ai -- .github/workflows/; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git checkout -B main origin/main
-            git checkout origin/ai -- .github/workflows/
-            git commit -m "chore: sync .github/workflows from ai [skip ci]"
-            git push origin main
-          fi
-
       - name: Sync upstream tags and detect changes
         id: detect
         run: |
@@ -128,12 +101,6 @@ jobs:
           git remote add upstream https://github.com/QuantumNous/new-api.git
           git fetch upstream main --tags
           git fetch origin main
-
-          merged=false
-          after_sha=$(git rev-parse origin/main)
-          if [ "$after_sha" != "${{ steps.before.outputs.main_sha }}" ]; then
-            merged=true
-          fi
 
           # Bring upstream tags into the fork so the latest tag on origin
           # always reflects what has already been seen.
@@ -145,15 +112,48 @@ jobs:
             tag_changed=true
           fi
 
-          echo "merged=$merged tag_changed=$tag_changed latest_tag=$latest_tag"
+          echo "tag_changed=$tag_changed latest_tag=$latest_tag"
           echo "tag_changed=$tag_changed" >> "$GITHUB_OUTPUT"
+
+      - name: Merge main into ai (仅新 tag 或 force_build 时)
+        id: aimerge
+        if: >-
+          steps.detect.outputs.tag_changed == 'true' ||
+          (github.event_name == 'workflow_dispatch' && inputs.force_build)
+        run: |
+          git fetch origin ai main
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B ai origin/ai
+          if git merge origin/main --no-edit; then
+            git push origin ai
+            echo "ai_ready=true" >> "$GITHUB_OUTPUT"
+          else
+            git merge --abort || true
+            echo "ai_ready=false" >> "$GITHUB_OUTPUT"
+            echo "AI_MERGE_CONFLICT=true" | tee -a "$GITHUB_ENV"
+            echo "::warning::main→ai 合并冲突，跳过本次 ai 更新与构建，转人工"
+          fi
+
+      - name: Open issue on ai merge conflict
+        if: env.AI_MERGE_CONFLICT == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          title="main → ai 合并冲突，需人工处理"
+          if ! gh issue list --state open --search "$title" --json title -q '.[].title' | grep -q "$title"; then
+            gh issue create --title "$title" --body "sync-upstream 在 \`git merge origin/main\`（into \`ai\`）时发生冲突（run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}）。通常是上游改动了 fork 也改过的文件（如 web/src/i18n/locales/*.json）。本地处理：\n\n\`\`\`bash\ngit checkout ai && git fetch upstream\ngit merge upstream/main\n# 解决冲突；locale json 建议按 key 三方合并（base→ai 的改动 overlay 到 upstream 版本上）\ngit push origin ai\n\`\`\`\n\n解决后下次 sync 会自动继续。"
+          fi
+          # 冲突不是系统故障，run 标成功，等人工处理后自然恢复
+          exit 0
 
   version:
     needs: sync
     # 与 build 同条件：上游新 tag 或手动 force_build 时，为本次构建计算并创建
     # fork 自有版本 tag（<上游最新版本>-<单字母>）。
     if: >-
-      always() && (
+      always() &&
+      needs.sync.outputs.ai_ready != 'false' && (
         needs.sync.outputs.tag_changed == 'true' ||
         (github.event_name == 'workflow_dispatch' && inputs.force_build)
       )
@@ -226,7 +226,8 @@ jobs:
     # never build. always() is required because a skipped sync job would
     # otherwise skip this job too.
     if: >-
-      always() && (
+      always() &&
+      needs.sync.outputs.ai_ready != 'false' && (
         needs.sync.outputs.tag_changed == 'true' ||
         (github.event_name == 'workflow_dispatch' && inputs.force_build)
       )
