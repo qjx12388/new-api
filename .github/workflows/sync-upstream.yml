@@ -61,12 +61,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Record previous state
-        id: before
-        run: |
-          echo "main_sha=$(git rev-parse origin/main)" >> "$GITHUB_OUTPUT"
-          echo "tag=$(git tag --sort=-v:refname | head -n1)" >> "$GITHUB_OUTPUT"
-
       - name: Merge upstream into main (fast-forward only)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -98,6 +92,11 @@ jobs:
         id: detect
         run: |
           set -e
+          # 记录同步前的完整 tag 集合（版本排序不可靠：上游历史 tag 命名
+          # 混用 rc21 / rc.22 两种格式，v:refname 会把 v1.0.0-rc21-i 排在
+          # v1.0.0-rc.23 之上——2026-08-02 因此漏检过新 tag）
+          git tag | sort > /tmp/tags_before.txt
+
           git remote add upstream https://github.com/QuantumNous/new-api.git
           git fetch upstream main --tags
           git fetch origin main
@@ -106,13 +105,18 @@ jobs:
           # always reflects what has already been seen.
           git push origin --tags
 
+          git tag | sort > /tmp/tags_after.txt
+          new_tags=$(comm -13 /tmp/tags_before.txt /tmp/tags_after.txt)
           tag_changed=false
-          latest_tag=$(git tag --sort=-v:refname | head -n1)
-          if [ "$latest_tag" != "${{ steps.before.outputs.tag }}" ]; then
+          if [ -n "$new_tags" ]; then
             tag_changed=true
           fi
 
-          echo "tag_changed=$tag_changed latest_tag=$latest_tag"
+          # 最新上游发布 tag：按创建时间倒序，限 v<数字> 开头（排除 nightly-*），
+          # 排除我们自己的 <版本>-<单字母> tag
+          latest_tag=$(git tag --sort=-creatordate | grep -E '^v[0-9]' | grep -vE -- '-[a-z]$' | head -n1)
+
+          echo "tag_changed=$tag_changed latest_tag=$latest_tag new_tags=$(echo $new_tags | tr '\n' ' ')"
           echo "tag_changed=$tag_changed" >> "$GITHUB_OUTPUT"
 
       - name: Merge main into ai (仅新 tag 或 force_build 时)
@@ -171,8 +175,10 @@ jobs:
         id: calc
         run: |
           set -e
-          # 上游最新版本 = 排除我们自己的 -<单字母> 形式 tag 后的最新 tag
-          base=$(git tag --sort=-v:refname | grep -vE -- '-[a-z]$' | head -n1)
+          # 上游最新版本 = 按创建时间倒序的第一个上游发布 tag：
+          # 限 v<数字> 开头（排除 nightly-*），排除我们自己的 -<单字母> 形式 tag。
+          # 不用版本排序：上游历史 tag 混用 rc21/rc.22 命名，v:refname 排序不可靠
+          base=$(git tag --sort=-creatordate | grep -E '^v[0-9]' | grep -vE -- '-[a-z]$' | head -n1)
           if [ -z "$base" ]; then
             echo "::error::no upstream tag found"
             exit 1
