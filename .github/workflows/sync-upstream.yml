@@ -6,12 +6,17 @@ name: Sync Fork with Upstream
 #   - 定时任务只从默认分支(ai)运行，main 上不再放任何 workflow。
 #
 # 同步逻辑：
-#   1. 每小时 merge-upstream 快进 main，并同步上游 tags。
+#   1. 每小时用 PAT git push 快进 main，并同步上游 tags。
+#      （不用 merge-upstream API：上游一旦新增/修改 .github/workflows/ 下的
+#      文件，GITHUB_TOKEN 无 workflows 权限会被 422 拒绝——2026-08-07 上游
+#      新增 sync-release-to-gitcode.yml 时实测踩中，故改用 git 方式。）
 #   2. 仅当上游出现新 tag（或手动 force_build）时，才把 main 合并进 ai ——
 #      ai 只在需要构建时吸收上游代码，避免每小时无谓冲突。
 #   3. ai 合并若冲突（fork 改动的文件上游也改了，如 i18n locale），自动开
 #      issue 通知人工处理，本次运行不视为失败，tag/构建跳过。
-#   4. main 若出现 409（意味着有人直接推了 main，破坏纯镜像约定），开 issue 报警。
+#   4. main 上若出现非 bot 的人工提交（破坏纯镜像约定），开 issue 报警。
+#   5. 上游新增 workflow 合并进 ai 后默认开启，白名单（sync-upstream/release）
+#      外的一律自动禁用，防止空跑报错。
 #
 # 打包规则（fork 自有版本）：
 #   每次构建基于 ai 分支，新增一个 tag：<上游最新版本>-<单字母>。
@@ -61,32 +66,55 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Merge upstream into main (fast-forward only)
+      - name: Sync main to upstream (PAT fast-forward)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
         run: |
-          # main 是纯上游镜像，merge-upstream 必然快进；409 说明有人直接推了 main。
-          for attempt in 1 2 3; do
-            if out=$(gh api repos/${{ github.repository }}/merge-upstream -f branch=main 2>&1); then
-              echo "$out"
-              break
+          set -e
+          # 为什么不用 merge-upstream API / GITHUB_TOKEN git push：上游一旦新增或
+          # 修改 .github/workflows/ 下的文件（2026-08 上游新增 sync-release-to-gitcode.yml
+          # 时实测踩中），GitHub App token（GITHUB_TOKEN，永远没有 workflows 权限）
+          # 的 API 调用和 git push 都会被拒绝：
+          #   422 refusing to allow a GitHub App to create or update workflow ...
+          # 唯一可靠做法是用带 Contents+Workflows 写权限的 PAT 走 git push。
+          if [ -z "$RELEASE_PAT" ]; then
+            echo "::error::secrets.RELEASE_PAT 未配置——上游改动 workflow 文件时同步必然 422。请在 Settings > Secrets and variables > Actions 添加含 Contents+Workflows 写权限的 PAT。"
+            exit 1
+          fi
+          git remote add upstream https://github.com/QuantumNous/new-api.git 2>/dev/null || true
+          git fetch upstream main
+          git fetch origin main
+
+          # 树比较（忽略 commit）：main 树 = 上游树即为最新（bot 空提交不影响树）
+          if git diff --quiet origin/main upstream/main; then
+            echo "main 已与上游一致，无需同步"
+            exit 0
+          fi
+
+          # main 上只允许 github-actions[bot] 的 [skip ci] 空提交（见下），
+          # 出现非空提交或 merge 提交 = 纯镜像被破坏，开 issue 转人工。
+          strays=$(git rev-list upstream/main..origin/main | while read -r h; do
+            nw=$(git rev-list --parents -n1 "$h" | wc -w)
+            if [ "$nw" -ne 2 ] || ! git diff --quiet "$h^" "$h"; then echo "$h"; fi
+          done)
+          if [ -n "$strays" ]; then
+            title="main 纯镜像被破坏：存在人工提交"
+            if ! gh issue list --state open --search "$title" --json title -q '.[].title' | grep -q "$title"; then
+              gh issue create --title "$title" --body "main 应是上游纯镜像（仅允许 bot 的 [skip ci] 空提交），但发现非空/合并提交：\n\n\`\`\`\n$(echo "$strays" | head -5)\n\`\`\`\n\n（run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}）确认后执行：\n\n\`\`\`bash\ngit fetch upstream\ngit push -f origin upstream/main:main\n\`\`\`"
             fi
-            echo "$out"
-            if echo "$out" | grep -q '409'; then
-              title="main 纯镜像被破坏：merge-upstream 返回 409"
-              if ! gh issue list --state open --search "$title" --json title -q '.[].title' | grep -q "$title"; then
-                gh issue create --title "$title" --body "main 应是上游纯镜像，但 merge-upstream 返回 409（run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}）。检查是否有人直接推送了 main；确认后执行：\n\n\`\`\`bash\ngit fetch upstream\ngit push -f origin upstream/main:main\n\`\`\`"
-              fi
-              echo "::error::merge-upstream 409 —— main 不是纯镜像，已开 issue"
-              exit 1
-            fi
-            if [ "$attempt" = 3 ]; then
-              echo "::error::merge-upstream failed after 3 attempts"
-              exit 1
-            fi
-            echo "merge-upstream attempt $attempt failed, retrying in 30s..."
-            sleep 30
-          done
+            echo "::error::main 存在人工提交（纯镜像被破坏），已开 issue"
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # 空提交带 [skip ci]：PAT 推送会触发 push 事件，[skip ci] 保证 main 树里
+          # 的上游 workflow（含本次新出现的）不会因这次推送而运行。
+          git checkout -B main upstream/main
+          git commit --allow-empty -m "chore: sync upstream main [skip ci]"
+          git push --force-with-lease="refs/heads/main:$(git rev-parse origin/main)" \
+            "https://x-access-token:${RELEASE_PAT}@github.com/${{ github.repository }}.git" main:main
 
       - name: Sync upstream tags and detect changes
         id: detect
@@ -97,7 +125,7 @@ jobs:
           # v1.0.0-rc.23 之上——2026-08-02 因此漏检过新 tag）
           git tag | sort > /tmp/tags_before.txt
 
-          git remote add upstream https://github.com/QuantumNous/new-api.git
+          git remote add upstream https://github.com/QuantumNous/new-api.git 2>/dev/null || true
           git fetch upstream main --tags
           git fetch origin main
 
@@ -124,13 +152,17 @@ jobs:
         if: >-
           steps.detect.outputs.tag_changed == 'true' ||
           (github.event_name == 'workflow_dispatch' && inputs.force_build)
+        env:
+          RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
         run: |
           git fetch origin ai main
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -B ai origin/ai
-          if git merge origin/main --no-edit; then
-            git push origin ai
+          # 合入的上游提交可能含 .github/workflows/ 变更，必须用带 Workflows
+          # 权限的 PAT 推送；merge 提交带 [skip ci] 抑制 PAT 推送触发的 push 事件。
+          if git merge origin/main -m "merge: main → ai [skip ci]"; then
+            git push "https://x-access-token:${RELEASE_PAT}@github.com/${{ github.repository }}.git" ai:ai
             echo "ai_ready=true" >> "$GITHUB_OUTPUT"
           else
             git merge --abort || true
@@ -150,6 +182,23 @@ jobs:
           fi
           # 冲突不是系统故障，run 标成功，等人工处理后自然恢复
           exit 0
+
+      - name: Disable non-whitelisted workflows
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 上游新增 workflow（如 sync-release-to-gitcode.yml）随 ai 合并进入默认
+          # 分支后默认开启，可能在 push/release 事件下空跑报错。白名单外一律禁用，
+          # 与既往人工禁用上游 5 个 workflow 的做法一致。
+          gh api "repos/${{ github.repository }}/actions/workflows?per_page=100" \
+            --jq '.workflows[] | select(.state == "active") | [.id, .path] | @tsv' |
+          while IFS=$'\t' read -r id path; do
+            case "$path" in
+              */sync-upstream.yml|*/release.yml) echo "keep active: $path" ;;
+              *) echo "disable: $path"
+                 gh api -X PUT "repos/${{ github.repository }}/actions/workflows/$id/disable" ;;
+            esac
+          done
 
   version:
     needs: sync
