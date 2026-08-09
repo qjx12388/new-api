@@ -195,8 +195,11 @@ jobs:
           while IFS=$'\t' read -r id path; do
             case "$path" in
               */sync-upstream.yml|*/release.yml) echo "keep active: $path" ;;
-              *) echo "disable: $path"
-                 gh api -X PUT "repos/${{ github.repository }}/actions/workflows/$id/disable" ;;
+              .github/workflows/*.yml|.github/workflows/*.yaml)
+                echo "disable: $path"
+                gh api -X PUT "repos/${{ github.repository }}/actions/workflows/$id/disable" \
+                  || echo "::warning::disable failed: $path" ;;
+              *) echo "skip (非 workflow 文件，如 dependabot): $path" ;;
             esac
           done
 
